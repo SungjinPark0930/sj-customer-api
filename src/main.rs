@@ -14,6 +14,7 @@ use routes::{
     check_secret::check_secret_handler,
     health::health_handler,
     insert_test_data::insert_test_data_handler,
+    login::login_page_handler,
 };
 use secret_manager::{access_secret, configure as configure_secret_manager, SecretManagerSettings};
 use serde::Serialize;
@@ -77,6 +78,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let app = Router::new()
+        .route("/", get(login_page_handler))
         .route("/v1/health", get(health_handler))
         .route("/v1/check-secret", get(check_secret_handler))
         .route("/v1/insert-test-data", post(insert_test_data_handler))
