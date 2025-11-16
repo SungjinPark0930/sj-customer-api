@@ -12,7 +12,9 @@ from typing import Iterable, List
 from google.cloud import firestore
 from google.cloud.firestore_v1 import FieldFilter
 
-PROJECT_ID = "sungjinpark"
+PROJECT_ID = (
+    Path(__file__).resolve().parents[1] / "project_id"
+).read_text(encoding="utf-8").strip()
 DATABASE_NAME = "sj-customer2"
 COLLECTION_NAME = "sj-customer"
 
