@@ -9,7 +9,7 @@ use chrono::{SecondsFormat, Utc};
 use config::{load as load_config, SecretSource};
 use gcp_auth::AuthenticationManager;
 use rand::{distributions::Alphanumeric, Rng};
-use reqwest::{Client, Url};
+use reqwest::{Client, Method, StatusCode, Url};
 use routes::{
     check_secret::check_secret_handler,
     health::health_handler,
@@ -19,6 +19,7 @@ use routes::{
 use secret_manager::{access_secret, configure as configure_secret_manager, SecretManagerSettings};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -272,12 +273,92 @@ impl AppState {
 
         let payload = login_document_payload(user_id, user_name, google_refresh_token, updated_at);
 
-        let document_name = self.insert_firestore_payload(payload).await?;
+        let document_name = match self
+            .insert_firestore_payload(payload, Some(user_id))
+            .await
+        {
+            Ok(name) => name,
+            Err(err) => {
+                if is_firestore_conflict(&err) {
+                    info!(
+                        user_id = %user_id,
+                        "Firestore document exists; updating timestamp instead"
+                    );
+                    self.update_login_timestamp(user_id, updated_at).await?
+                } else {
+                    return Err(err);
+                }
+            }
+        };
 
         info!(
             document_name = %document_name,
             user_id = %user_id,
-            "Firestore login document insert completed"
+            "Firestore login document write completed"
+        );
+
+        Ok(document_name)
+    }
+
+    async fn update_login_timestamp(
+        &self,
+        user_id: &str,
+        updated_at: chrono::DateTime<Utc>,
+    ) -> anyhow::Result<String> {
+        info!(
+            user_id = %user_id,
+            "starting Firestore login timestamp update"
+        );
+
+        let base_url = self.firestore_documents_base_url();
+        let mut url = Url::parse(&base_url).context("failed to parse Firestore document URL")?;
+
+        {
+            let mut segments = url
+                .path_segments_mut()
+                .map_err(|_| anyhow!("Firestore documents URL is not base"))?;
+            segments.push(user_id);
+        }
+
+        url.query_pairs_mut()
+            .append_pair("updateMask.fieldPaths", "updatedAt");
+
+        info!("requesting Firestore document update at {}", url);
+
+        let payload = json!({
+            "fields": {
+                "updatedAt": {
+                    "timestampValue": updated_at.to_rfc3339_opts(SecondsFormat::Secs, true)
+                }
+            }
+        });
+
+        let (status, body_text) = self
+            .firestore_request(Method::PATCH, url.clone(), payload)
+            .await?;
+
+        if !status.is_success() {
+            error!(
+                status = %status,
+                body = %body_text,
+                "Firestore update failed"
+            );
+            return Err(FirestoreError::new(status, body_text).into());
+        }
+
+        let body: serde_json::Value = serde_json::from_str(&body_text)
+            .context("failed to parse Firestore response body")?;
+
+        let document_name = body
+            .get("name")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        info!(
+            document_name = %document_name,
+            user_id = %user_id,
+            "Firestore login timestamp update completed"
         );
 
         Ok(document_name)
@@ -313,44 +394,24 @@ impl AppState {
         })
     }
 
-    async fn insert_firestore_payload(&self, payload: serde_json::Value) -> anyhow::Result<String> {
-        info!("requesting Firestore access token");
+    async fn insert_firestore_payload(
+        &self,
+        payload: serde_json::Value,
+        document_id: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let base_url = self.firestore_documents_base_url();
 
-        let token = self
-            .auth_manager
-            .get_token(&[self.firestore_scope.as_str()])
-            .await
-            .context("failed to obtain Firestore access token")?;
+        let mut url = Url::parse(&base_url).context("failed to parse Firestore document URL")?;
 
-        info!("obtained Firestore access token");
-
-        let url = format!(
-            "{}/projects/{}/databases/{}/documents/{}",
-            self.firestore_endpoint,
-            self.gcp_project_id,
-            self.firestore_database_id,
-            self.firestore_collection
-        );
+        if let Some(doc_id) = document_id {
+            url.query_pairs_mut().append_pair("documentId", doc_id);
+        }
 
         info!("requesting Firestore document insert at {}", url);
 
-        let response = self
-            .http_client
-            .post(&url)
-            .bearer_auth(token.as_str())
-            .json(&payload)
-            .send()
-            .await
-            .context("failed to call Firestore API")?;
-
-        let status = response.status();
-
-        info!(%status, "received Firestore response");
-
-        let body_text = response
-            .text()
-            .await
-            .context("failed to read Firestore response body")?;
+        let (status, body_text) = self
+            .firestore_request(Method::POST, url.clone(), payload)
+            .await?;
 
         if !status.is_success() {
             error!(
@@ -358,11 +419,7 @@ impl AppState {
                 body = %body_text,
                 "Firestore insert failed"
             );
-            return Err(anyhow!(
-                "Firestore insert failed with status {}: {}",
-                status,
-                body_text
-            ));
+            return Err(FirestoreError::new(status, body_text).into());
         }
 
         let body: serde_json::Value = serde_json::from_str(&body_text)
@@ -375,6 +432,53 @@ impl AppState {
             .to_string();
 
         Ok(document_name)
+    }
+
+    async fn firestore_request(
+        &self,
+        method: Method,
+        url: Url,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<(StatusCode, String)> {
+        info!("requesting Firestore access token");
+
+        let token = self
+            .auth_manager
+            .get_token(&[self.firestore_scope.as_str()])
+            .await
+            .context("failed to obtain Firestore access token")?;
+
+        info!("obtained Firestore access token");
+
+        let response = self
+            .http_client
+            .request(method, url.clone())
+            .bearer_auth(token.as_str())
+            .json(&payload)
+            .send()
+            .await
+            .context("failed to call Firestore API")?;
+
+        let status = response.status();
+
+        info!(%status, %url, "received Firestore response");
+
+        let body_text = response
+            .text()
+            .await
+            .context("failed to read Firestore response body")?;
+
+        Ok((status, body_text))
+    }
+
+    fn firestore_documents_base_url(&self) -> String {
+        format!(
+            "{}/projects/{}/databases/{}/documents/{}",
+            self.firestore_endpoint,
+            self.gcp_project_id,
+            self.firestore_database_id,
+            self.firestore_collection
+        )
     }
 }
 
@@ -411,6 +515,35 @@ pub(crate) struct InsertTestDataResponse {
     google_refresh_token: String,
     #[serde(rename = "updatedAt")]
     updated_at: String,
+}
+
+#[derive(Debug)]
+struct FirestoreError {
+    status: StatusCode,
+    body: String,
+}
+
+impl FirestoreError {
+    fn new(status: StatusCode, body: String) -> Self {
+        Self { status, body }
+    }
+}
+
+impl fmt::Display for FirestoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Firestore request failed with status {}: {}",
+            self.status, self.body
+        )
+    }
+}
+
+impl std::error::Error for FirestoreError {}
+
+fn is_firestore_conflict(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<FirestoreError>()
+        .map_or(false, |firestore_err| firestore_err.status == StatusCode::CONFLICT)
 }
 
 fn random_alphanumeric(len: usize) -> String {
