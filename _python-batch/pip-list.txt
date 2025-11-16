@@ -1,0 +1,3 @@
+pip3 google-cloud-firestore
+pip3 google-cloud-core
+pip3 google-api-core
