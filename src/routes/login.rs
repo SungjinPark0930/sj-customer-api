@@ -138,39 +138,7 @@ const LOGIN_PAGE_TEMPLATE: &str = r#"
   </head>
   <body>
     __USER_BADGE__
-    <main class="card">
-      <h1>Google 계정 로그인</h1>
-      <p class="subtitle">서비스를 사용하려면 Google Email과 Password를 입력하세요.</p>
-      <form method="post" action="/login">
-        <label for="email">Google Email</label>
-        <input
-          id="email"
-          name="email"
-          type="email"
-          inputmode="email"
-          placeholder="name@example.com"
-          autocomplete="username"
-          required
-        />
-
-        <label for="password">Password</label>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          autocomplete="current-password"
-          minlength="8"
-          required
-        />
-
-        <button type="submit">로그인</button>
-      </form>
-      <p class="helper">
-        비밀번호를 잊으셨나요?
-        <a href="https://accounts.google.com/signin/v2/sl/pwd" rel="noopener noreferrer">Google 계정 복구</a>
-      </p>
-      __STATUS_BANNER__
-    </main>
+    __CARD_CONTENT__
   </body>
 </html>
 "#;
@@ -237,27 +205,70 @@ pub async fn login_submit_handler(State(state): State<AppState>, Form(form): For
 
 fn render_login_page(user_name: Option<&str>, status: Option<StatusMessage>) -> String {
     let badge_html = user_name
-        .map(|name| {
-            format!(
-                r#"<div class=\"user-badge\">현재 로그인: {}</div>"#,
-                html_escape(name)
-            )
-        })
+        .map(|name| format!(r#"<div class="user-badge">현재 로그인: {}</div>"#, html_escape(name)))
         .unwrap_or_default();
 
     let status_html = status
         .map(|message| {
             format!(
-                r#"<div class=\"status-banner status-{}\">{}</div>"#,
+                r#"<div class="status-banner status-{}">{}</div>"#,
                 message.kind.css_class(),
                 html_escape(&message.text)
             )
         })
         .unwrap_or_default();
 
+    let card_content = match user_name {
+        Some(name) => {
+            let escaped_name = html_escape(name);
+            format!(
+                r#"<main class="card">
+      <h1>로그인이 완료되었습니다.</h1>
+      <p class="subtitle">현재 {escaped_name} 계정으로 로그인되어 있습니다.</p>
+      {status_html}
+    </main>"#,
+            )
+        }
+        None => format!(
+            r#"<main class="card">
+      <h1>Google 계정 로그인</h1>
+      <p class="subtitle">서비스를 사용하려면 Google Email과 Password를 입력하세요.</p>
+      <form method="post" action="/login">
+        <label for="email">Google Email</label>
+        <input
+          id="email"
+          name="email"
+          type="email"
+          inputmode="email"
+          placeholder="name@example.com"
+          autocomplete="username"
+          required
+        />
+
+        <label for="password">Password</label>
+        <input
+          id="password"
+          name="password"
+          type="password"
+          autocomplete="current-password"
+          minlength="8"
+          required
+        />
+
+        <button type="submit">로그인</button>
+      </form>
+      <p class="helper">
+        비밀번호를 잊으셨나요?
+        <a href="https://accounts.google.com/signin/v2/sl/pwd" rel="noopener noreferrer">Google 계정 복구</a>
+      </p>
+      {status_html}
+    </main>"#,
+        ),
+    };
+
     LOGIN_PAGE_TEMPLATE
         .replace("__USER_BADGE__", &badge_html)
-        .replace("__STATUS_BANNER__", &status_html)
+        .replace("__CARD_CONTENT__", &card_content)
 }
 
 #[derive(Clone)]
