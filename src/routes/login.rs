@@ -134,10 +134,37 @@ const LOGIN_PAGE_TEMPLATE: &str = r#"
         background: rgba(250, 81, 81, 0.18);
         color: #a11010;
       }
+
+      .nav-menu {
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 16px;
+        padding: 10px 18px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.9);
+        box-shadow: 0 4px 16px rgba(23, 48, 79, 0.15);
+        font-weight: 600;
+      }
+
+      .nav-menu a {
+        color: #17304f;
+        text-decoration: none;
+        padding: 4px 8px;
+        border-radius: 999px;
+        transition: background 0.15s ease;
+      }
+
+      .nav-menu a:hover {
+        background: rgba(47, 104, 255, 0.12);
+      }
     </style>
   </head>
   <body>
     __USER_BADGE__
+    __NAV_MENU__
     __CARD_CONTENT__
   </body>
 </html>
@@ -208,6 +235,17 @@ fn render_login_page(user_name: Option<&str>, status: Option<StatusMessage>) -> 
         .map(|name| format!(r#"<div class="user-badge">현재 로그인: {}</div>"#, html_escape(name)))
         .unwrap_or_default();
 
+    let nav_menu_html = user_name
+        .map(|_| {
+            r#"<nav class="nav-menu">
+      <a href="/">홈</a>
+      <a href="https://contacts.google.com/" target="_blank" rel="noopener noreferrer">구글 주소록</a>
+      <a href="/settings">설정</a>
+    </nav>"#
+                .to_string()
+        })
+        .unwrap_or_default();
+
     let status_html = status
         .map(|message| {
             format!(
@@ -268,6 +306,7 @@ fn render_login_page(user_name: Option<&str>, status: Option<StatusMessage>) -> 
 
     LOGIN_PAGE_TEMPLATE
         .replace("__USER_BADGE__", &badge_html)
+        .replace("__NAV_MENU__", &nav_menu_html)
         .replace("__CARD_CONTENT__", &card_content)
 }
 
