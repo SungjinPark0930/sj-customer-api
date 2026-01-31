@@ -1,0 +1,108 @@
+
+# Clean-up
+find ./ -name '*.tfstate*' -exec rm -f {} \; 2>/dev/null
+
+# Create sample TF file
+echo "resource \"aws_lb_target_group\" \"test\" {" > sample.tf
+echo "}" >> sample.tf
+
+# Initialize
+terraform init
+rm -f sample.tf
+
+# Start Automation
+
+echo ""
+echo "#### Create CodePipeline ####"
+export WORK_DIR="create-codepipeline-api"
+export WORK_DIR_02="create-codepipeline-$SERVICE_CLASSIFICATION_LOWER_NAME"
+export FILE_NAME="create-codepipeline-lambda.tf"
+mkdir -p $WORK_DIR_02
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/ARTIFACT_LOCATION/$ARTIFACT_LOCATION/g" $FILE_NAME
+sed -i "s/AWS_ACCOUNT_NUMBER/$AWS_ACCOUNT_NUMBER/g" $FILE_NAME
+sed -i "s/BRANCH_NAME_VALUE/$BRANCH_NAME_VALUE/g" $FILE_NAME
+sed -i "s/CODEPIPELINE_SERVICE_ROLE_NAME/$CODEPIPELINE_SERVICE_ROLE_NAME/g" $FILE_NAME
+sed -i "s/FULL_REPOSITORY_ID_VALUE/$FULL_REPOSITORY_ID_VALUE/g" $FILE_NAME
+sed -i "s/GITHUB_CONNECTION_ARN/$GITHUB_CONNECTION_ARN/g" $FILE_NAME
+sed -i "s/SYSTEM_NAME_FIRST_UPPERCASE/$SYSTEM_NAME_FIRST_UPPERCASE/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME_LOWER/$ENVIRONMENT_NAME_LOWER/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME_UPPER/$ENVIRONMENT_NAME_UPPER/g" $FILE_NAME
+sed -i "s/ENV_NAME_FIRST_UPPER/$ENV_NAME_FIRST_UPPER/g" $FILE_NAME
+sed -i "s/SERVICE_CLASSIFICATION_NAME/$SERVICE_CLASSIFICATION_NAME/g" $FILE_NAME
+sed -i "s/MAIN_NAME_FIRST_UPPERCASE/$MAIN_NAME_FIRST_UPPERCASE/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+cat $FILE_NAME | egrep '(ProjectName|FullRepositoryId|BranchName)'
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR_02
+mv terraform.tfstate $WORK_DIR_02 2>/dev/null
+
+echo ""
+echo "#### Create CodeBuild ####"
+export WORK_DIR="create-codebuild"
+export WORK_DIR_02="create-codebuild-$SERVICE_CLASSIFICATION_LOWER_NAME"
+export FILE_NAME="create-codebuild.tf"
+mkdir -p $WORK_DIR_02
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/AWS_ACCOUNT_NUMBER/$AWS_ACCOUNT_NUMBER/g" $FILE_NAME
+sed -i "s/BUILDSPEC_FILE_NAME/$BUILDSPEC_FILE_NAME/g" $FILE_NAME
+sed -i "s/CODEBUILD_SERVICE_ROLE_NAME/$CODEBUILD_SERVICE_ROLE_NAME/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME_LOWER/$ENVIRONMENT_NAME_LOWER/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME_UPPER/$ENVIRONMENT_NAME_UPPER/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME/$ENVIRONMENT_NAME/g" $FILE_NAME
+sed -i "s/ENV_NAME_FIRST_UPPER/$ENV_NAME_FIRST_UPPER/g" $FILE_NAME
+sed -i "s/SYSTEM_NAME_FIRST_UPPERCASE/$SYSTEM_NAME_FIRST_UPPERCASE/g" $FILE_NAME
+sed -i "s/SERVICE_CLASSIFICATION_NAME/$SERVICE_CLASSIFICATION_NAME/g" $FILE_NAME
+sed -i "s/MAIN_NAME_FIRST_UPPERCASE/$MAIN_NAME_FIRST_UPPERCASE/g" $FILE_NAME
+sed -i "s/MAIN_NAME_SHORT_FIRST_UPPER/$MAIN_NAME_SHORT_FIRST_UPPER/g" $FILE_NAME
+sed -i "s/SUBNET1_ID/$SUBNET1_ID/g" $FILE_NAME
+sed -i "s/SUBNET2_ID/$SUBNET2_ID/g" $FILE_NAME
+sed -i "s/VPC_ID/$VPC_ID/g" $FILE_NAME
+sed -i "s/CODEBUILD_SG_ID/$CODEBUILD_SG_ID/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+cat $FILE_NAME | egrep '(service|key|Environment|build|description|name)'
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR_02
+mv terraform.tfstate $WORK_DIR_02 2>/dev/null
+
+echo ""
+echo "#### Create CodeBuild-Codeonly ####"
+export WORK_DIR="create-codebuild"
+export WORK_DIR_02="create-codebuild-$SERVICE_CLASSIFICATION_LOWER_NAME-codeonly"
+export FILE_NAME="create-codebuild.tf"
+mkdir -p $WORK_DIR_02
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/AWS_ACCOUNT_NUMBER/$AWS_ACCOUNT_NUMBER/g" $FILE_NAME
+sed -i "s/BUILDSPEC_FILE_NAME/$ENVIRONMENT_NAME_LOWER.buildspec-codeonly.yml/g" $FILE_NAME
+sed -i "s/CODEBUILD_SERVICE_ROLE_NAME/$CODEBUILD_SERVICE_ROLE_NAME/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME_LOWER/$ENVIRONMENT_NAME_LOWER/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME_UPPER/$ENVIRONMENT_NAME_UPPER/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME/$ENVIRONMENT_NAME/g" $FILE_NAME
+sed -i "s/ENV_NAME_FIRST_UPPER/$ENV_NAME_FIRST_UPPER/g" $FILE_NAME
+sed -i "s/SYSTEM_NAME_FIRST_UPPERCASE/$SYSTEM_NAME_FIRST_UPPERCASE/g" $FILE_NAME
+sed -i "s/SERVICE_CLASSIFICATION_NAME/$SERVICE_CLASSIFICATION_NAME-Codeonly/g" $FILE_NAME
+sed -i "s/MAIN_NAME_FIRST_UPPERCASE/$MAIN_NAME_FIRST_UPPERCASE/g" $FILE_NAME
+sed -i "s/MAIN_NAME_SHORT_FIRST_UPPER/$MAIN_NAME_SHORT_FIRST_UPPER/g" $FILE_NAME
+sed -i "s/SUBNET1_ID/$SUBNET1_ID/g" $FILE_NAME
+sed -i "s/SUBNET2_ID/$SUBNET2_ID/g" $FILE_NAME
+sed -i "s/VPC_ID/$VPC_ID/g" $FILE_NAME
+sed -i "s/CODEBUILD_SG_ID/$CODEBUILD_SG_ID/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+cat $FILE_NAME | egrep '(service|key|Environment|build|description|name)'
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR_02
+mv terraform.tfstate $WORK_DIR_02 2>/dev/null
+
+
+# Clean-up
+find /home/ec2-user -name "*.lock.hcl" -o -name "*.tfstate" -o -name "*.tfstate.backup" -o -name "terraform-provider-aws*" -o -type d -name ".terraform" -exec rm -rf {} \; 2>/dev/null
+mkdir -p ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER
+
+cp -rp create* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp attach* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+mv *.log ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER
+#cp -rp codepipeline-create.sh ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER/codepipeline-create-$SERVICE_CLASSIFICATION_LOWER_NAME.sh
+
+rm -rf create* 2>/dev/null
+rm -rf attach* 2>/dev/null
+

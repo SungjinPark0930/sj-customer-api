@@ -1,0 +1,54 @@
+
+# Clean-up
+find ./ -name '*.tfstate*' -exec rm -f {} \; 2>/dev/null
+
+# Create sample TF file
+echo "resource \"aws_lb_target_group\" \"test\" {" > sample.tf
+echo "}" >> sample.tf
+
+# Initialize
+terraform init
+rm -f sample.tf
+
+# Start Automation
+echo "" >> $LOG_NAME
+echo "#### Delete the existing .tfstate ####"
+/usr/bin/find ./ -name '*.tfstate' -exec rm -f {} \; 2>/dev/null
+
+
+###########################################################################
+echo ""
+echo "#### Create Cognito ####"
+export WORK_DIR="create-cognito"
+export WORK_DIR_02="create-cognito-$SERVICE_CLASSIFICATION_LOWER_NAME"
+export FILE_NAME="create-cognito.tf"
+mkdir -p $WORK_DIR_02
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/ENVIRONMENT_NAME/$ENVIRONMENT_NAME/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+sed -i "s/MAIN_NAME_FIRST_UPPERCASE/$MAIN_NAME_FIRST_UPPERCASE/g" $FILE_NAME
+cat $FILE_NAME | egrep '(bucket)' | egrep -v '(resource|aws_s3_bucket|owner|bucket_key)'
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR_02
+mv terraform.tfstate $WORK_DIR_02 2>/dev/null
+
+
+# Clean-up in Current Location
+find ./ -name "*.lock.hcl" -exec rm -f {} \;
+find ./ -name "*.tfstate.backup" -exec rm -f {} \;
+find ./ -name "terraform-provider-aws*" -exec rm -f {} \;
+find ./ -type d -name ".terraform" -exec rm -r {} \; 2>/dev/null
+
+mkdir -p ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER
+
+cp -rp create* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp attach* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp update* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp *.log ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp cloudfront-create.sh ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER/cloudfront-create-$SERVICE_CLASSIFICATION_LOWER_NAME.sh 2>/dev/null
+
+rm -rf create* 2>/dev/null
+rm -rf attach* 2>/dev/null
+rm -rf update* 2>/dev/null
+rm -f *.txt 2>/dev/null
+rm -f *.log 2>/dev/null

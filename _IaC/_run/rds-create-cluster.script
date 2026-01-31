@@ -1,0 +1,112 @@
+
+# Clean-up
+find ./ -name '*.tfstate*' -exec rm -f {} \; 2>/dev/null
+
+# Create sample TF file
+echo "resource \"aws_lb_target_group\" \"test\" {" > sample.tf
+echo "}" >> sample.tf
+
+# Initialize
+terraform init
+rm -f sample.tf
+
+# Start Automation
+echo "" >> $LOG_NAME
+echo "#### Delete the existing .tfstate ####"
+/usr/bin/find ./ -name '*.tfstate' -exec rm -f {} \; 2>/dev/null
+
+
+echo "" >> $LOG_NAME
+echo "#### Create SecurityGroup ####" >> $LOG_NAME
+export WORK_DIR="create-sg"
+export WORK_DIR_02="create-sg-$SERVICE_CLASSIFICATION_LOWER_NAME"
+export FILE_NAME="create-sg.tf"
+mkdir -p $WORK_DIR_02
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/ENVIRONMENT_NAME/$ENVIRONMENT_NAME/g" $FILE_NAME
+sed -i "s/SECURITY_GROUP_NAME/$MAIN_NAME_FIRST_UPPERCASE-DB/g" $FILE_NAME
+sed -i "s/SYSTEM_NAME_FIRST_UPPERCASE/$MAIN_NAME_FIRST_UPPERCASE-DB/g" $FILE_NAME
+sed -i "s/VPC_ID/$VPC_ID/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+cat $FILE_NAME | egrep '(|FullRepositoryId|Name|name|Path|Environment|_id)' >> $LOG_NAME
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR_02
+mv terraform.tfstate $WORK_DIR_02 2>/dev/null
+
+# Get DB SecurityGroup ID
+export DB_SG_ID_SERVICE=$(aws ec2 describe-security-groups --query "SecurityGroups[?GroupName==\`$MAIN_NAME_FIRST_UPPERCASE-DB\`].GroupId" --output text)
+echo "DB_SG_ID_SERVICE : $DB_SG_ID_SERVICE"
+echo "DB_SG_ID_SERVICE : $DB_SG_ID_SERVICE" >> $LOG_NAME
+
+echo "" >> $LOG_NAME
+echo "#### Create KMS ####" >> $LOG_NAME
+# Pre-check the existing key
+export DB_KMS_KEY_ID_CHECK="`aws kms list-aliases --query "Aliases[?AliasName == 'alias/$MAIN_NAME_FIRST_UPPERCASE'].TargetKeyId" --output text`"
+echo "DB_KMS_KEY_ID_CHECK : $DB_KMS_KEY_ID_CHECK"
+echo "DB_KMS_KEY_ID_CHECK : $DB_KMS_KEY_ID_CHECK" >> $LOG_NAME
+
+if [ ${#DB_KMS_KEY_ID_CHECK} -ge 10 ]; then
+	echo "Length is greater than or equal to 10.  Key exist.  No action."
+	echo "Length is greater than or equal to 10.  Key exist.  No action." >> $LOG_NAME
+	export DB_KMS_KEY_ID="$DB_KMS_KEY_ID_CHECK"
+	echo "DB_KMS_KEY_ID : $DB_KMS_KEY_ID"
+	echo "DB_KMS_KEY_ID : $DB_KMS_KEY_ID" >> $LOG_NAME
+else
+	echo "Create a KMS Key"
+
+	# Get KMS Key ID once created KMS Key
+	export DB_KMS_KEY_INFO=$(aws kms create-key --description "$MAIN_NAME_FIRST_UPPERCASE")
+	export DB_KMS_KEY_ID=$(echo $DB_KMS_KEY_INFO | jq -r '.KeyMetadata.KeyId')
+	echo "DB_KMS_KEY_ID: $DB_KMS_KEY_ID"
+	echo "DB_KMS_KEY_ID: $DB_KMS_KEY_ID" >> $LOG_NAME
+	echo "$DB_KMS_KEY_ID" > db_kms_key_id.txt
+
+	# Create KMS Alias
+	echo "Create KMS Alias"
+	aws kms create-alias --alias-name alias/$MAIN_NAME_FIRST_UPPERCASE --target-key-id $DB_KMS_KEY_ID
+fi
+
+
+echo "" >> $LOG_NAME
+echo "#### Create RDS Cluster ####" >> $LOG_NAME
+export WORK_DIR="create-rds-cluster"
+export FILE_NAME="create-rds-cluster.tf"
+mkdir -p $WORK_DIR
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/ENVIRONMENT_NAME_LOWER/$ENVIRONMENT_NAME_LOWER/g" $FILE_NAME
+sed -i "s/ENV_NAME_LOWER_THREE_CHARACTER/$ENV_NAME_LOWER_THREE_CHARACTER/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME_UPPER/$ENVIRONMENT_NAME_UPPER/g" $FILE_NAME
+sed -i "s/MAIN_NAME_SHORT_LOWER/$MAIN_NAME_SHORT_LOWER/g" $FILE_NAME
+sed -i "s/AWS_ACCOUNT_NUMBER/$AWS_ACCOUNT_NUMBER/g" $FILE_NAME
+sed -i "s/DB_KMS_KEY_ID/$DB_KMS_KEY_ID/g" $FILE_NAME
+sed -i "s/DB_SUBNET_GROUP_NAME_VALUE/$DB_SUBNET_GROUP_NAME_VALUE/g" $FILE_NAME
+sed -i "s/MAIN_NAME_FIRST_UPPERCASE/$MAIN_NAME_FIRST_UPPERCASE/g" $FILE_NAME
+sed -i "s/DB_SG_ID_COMMON/$DB_SG_ID_COMMON/g" $FILE_NAME
+sed -i "s/DB_SG_ID_SERVICE/$DB_SG_ID_SERVICE/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+cat $FILE_NAME | egrep '(|FullRepositoryId|Name|name|Path|Environment|_id)' >> $LOG_NAME
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR
+mv terraform.tfstate $WORK_DIR 2>/dev/null
+
+
+
+# Clean-up in Current Location
+find ./ -name "*.lock.hcl" -exec rm -f {} \;
+find ./ -name "*.tfstate.backup" -exec rm -f {} \;
+find ./ -name "terraform-provider-aws*" -exec rm -f {} \;
+find ./ -type d -name ".terraform" -exec rm -r {} \; 2>/dev/null
+
+cp -rp create* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp attach* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp update* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp *.json ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp *.log ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp codepipeline-create-api.sh ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+
+rm -rf create* 2>/dev/null
+rm -rf attach* 2>/dev/null
+rm -rf update* 2>/dev/null
+rm -f *.json 2>/dev/null
+rm -f *.txt 2>/dev/null
+rm -f *.log 2>/dev/null

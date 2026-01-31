@@ -1,0 +1,267 @@
+
+# Clean-up
+find ./ -name '*.tfstate*' -exec rm -f {} \; 2>/dev/null
+
+# Create sample TF file
+echo "resource \"aws_lb_target_group\" \"test\" {" > sample.tf
+echo "}" >> sample.tf
+
+# Initialize
+terraform init
+rm -f sample.tf
+
+# Start Automation
+echo "" >> $LOG_NAME
+echo "#### Delete the existing .tfstate ####"
+/usr/bin/find ./ -name '*.tfstate' -exec rm -f {} \; 2>/dev/null
+
+echo "" >> $LOG_NAME
+echo "#### Create TargetGroup 01 ####" >> $LOG_NAME
+export WORK_DIR="create-tg"
+export WORK_DIR_02="create-tg-$SERVICE_CLASSIFICATION_LOWER_NAME"
+export FILE_NAME="create-tg.tf"
+mkdir -p $WORK_DIR_02
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/TARGET_GROUP_NAME/$TARGET_GROUP_NAME_01/g" $FILE_NAME 
+sed -i "s/VPC_ID/$VPC_ID/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME/$ENVIRONMENT_NAME/g" $FILE_NAME
+sed -i "s/ELB_HEALTHCHECK_PATH/$ELB_HEALTHCHECK_PATH/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+cat $FILE_NAME | egrep '(name|vpc_id|Environment|path|interval|threshold)' >> $LOG_NAME
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR_02
+mv terraform.tfstate $WORK_DIR_02 2>/dev/null
+
+
+echo "#### Create SG ####" >> $LOG_NAME
+export WORK_DIR="update-sg"
+export WORK_DIR_02="update-sg-v2-$SERVICE_CLASSIFICATION_LOWER_NAME"
+export FILE_NAME="update-sg-v2-elb.tf"
+mkdir -p $WORK_DIR_02
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/SECURITY_GROUP_NAME/$SECURITY_GROUP_NAME/g" $FILE_NAME
+sed -i "s/VPC_ID/$VPC_ID/g" $FILE_NAME
+sed -i "s/VPC_IP_RANGE/$VPC_IP_RANGE/g" $FILE_NAME
+sed -i "s/TICKET_NUMBER/$TICKET_NUMBER/g" $FILE_NAME
+sed -i "s/SUBNET1_ID/$SUBNET1_ID/g" $FILE_NAME
+sed -i "s/SUBNET2_ID/$SUBNET2_ID/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME/$ENVIRONMENT_NAME/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+cat $FILE_NAME | egrep '(name|cidr_blocks|port)' >> $LOG_NAME
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR_02
+mv terraform.tfstate $WORK_DIR_02 2>/dev/null
+
+export AWS_PROFILE="default"
+export SECURITY_GROUP_ID="`$AWS_CLI_HOME/aws ec2 describe-security-groups --filters Name=vpc-id,Values=$VPC_ID --filters Name=group-name,Values=$SECURITY_GROUP_NAME --region ap-northeast-2 --query 'SecurityGroups[0].GroupId' --output text`"
+
+
+echo "" >> $LOG_NAME
+echo "#### Update SG ####" >> $LOG_NAME
+export WORK_DIR="update-sg"
+export WORK_DIR_02="update-sg-v1-$SERVICE_CLASSIFICATION_LOWER_NAME"
+export FILE_NAME="update-sg-v1-elb.tf"
+mkdir -p $WORK_DIR_02
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/SECURITY_GROUP_NAME/$SECURITY_GROUP_NAME/g" $FILE_NAME
+sed -i "s/SECURITY_GROUP_ID/$SECURITY_GROUP_ID/g" $FILE_NAME
+sed -i "s/VPC_ID/$VPC_ID/g" $FILE_NAME
+sed -i "s/VPC_IP_RANGE/$VPC_IP_RANGE/g" $FILE_NAME
+sed -i "s/TICKET_NUMBER/$TICKET_NUMBER/g" $FILE_NAME
+sed -i "s/SUBNET1_ID/$SUBNET1_ID/g" $FILE_NAME
+sed -i "s/SUBNET2_ID/$SUBNET2_ID/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME/$ENVIRONMENT_NAME/g" $FILE_NAME
+cat $FILE_NAME | egrep '(name|cidr_blocks|port)' >> $LOG_NAME
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR_02
+mv terraform.tfstate $WORK_DIR_02 2>/dev/null
+
+echo "" >> $LOG_NAME
+echo "#### Create ALB ####" >> $LOG_NAME
+export WORK_DIR="create-elb"
+export WORK_DIR_02="create-elb-$SERVICE_CLASSIFICATION_LOWER_NAME"
+export FILE_NAME="create-elb.tf"
+mkdir -p $WORK_DIR_02
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/ELB_NAME/$ELB_NAME/g" $FILE_NAME
+sed -i "s/SECURITY_GROUP_ID/$SECURITY_GROUP_ID/g" $FILE_NAME 
+sed -i "s/ENVIRONMENT_NAME/$ENVIRONMENT_NAME/g" $FILE_NAME
+    if [ $SERVICE_CLASSIFICATION_LOWER_NAME == "admin" ]; then
+        # Set Internal ALB
+        echo "Set Internal ALB Config"
+        echo "Set Internal ALB Config" >> $LOG_NAME
+        sed -i "s/internal           = false/internal           = true/g" $FILE_NAME
+        sed -i "s/ELB_PUBLIC_SUBNET_ID_01/$SUBNET1_ID/g" $FILE_NAME 
+        sed -i "s/ELB_PUBLIC_SUBNET_ID_02/$SUBNET2_ID/g" $FILE_NAME
+        sed -i "s/CLOUDFRONT_SG1_ID/$SECURITY_GROUP_ID/g" $FILE_NAME
+        sed -i "s/CLOUDFRONT_SG2_ID/$SECURITY_GROUP_ID/g" $FILE_NAME
+    else
+        echo "It is not Internal ALB"
+        echo "It is not Internal ALB" >> $LOG_NAME
+    fi
+sed -i "s/CLOUDFRONT_SG1_ID/$CLOUDFRONT_SG1_ID/g" $FILE_NAME
+sed -i "s/CLOUDFRONT_SG2_ID/$CLOUDFRONT_SG2_ID/g" $FILE_NAME
+sed -i "s/ELB_PUBLIC_SUBNET_ID_01/$ELB_PUBLIC_SUBNET_ID_01/g" $FILE_NAME 
+sed -i "s/ELB_PUBLIC_SUBNET_ID_02/$ELB_PUBLIC_SUBNET_ID_02/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+cat $FILE_NAME | egrep '(name|security_group|subnet|Environment)' >> $LOG_NAME
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR_02
+mv terraform.tfstate $WORK_DIR_02 2>/dev/null
+
+
+echo "" >> $LOG_NAME
+echo "#### Create ACM ####" >> $LOG_NAME
+export WORK_DIR="create-acm-both-region-xxxx.co.kr"
+export FILE_NAME="create-acm-both-region.tf"
+export ACM_ARN_SEOUL="`$AWS_CLI_HOME/aws acm list-certificates --query "CertificateSummaryList[?contains(DomainName, '$DOMAIN_NAME_VALUE')].CertificateArn" --region ap-northeast-2 --output text`"
+mkdir -p $WORK_DIR
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/DOMAIN_NAME_VALUE/$DOMAIN_NAME_VALUE/g" $FILE_NAME
+cat $FILE_NAME | egrep '(domain_name)' >> $LOG_NAME
+
+# If ACM_ARN_SEOUL is exist already. (NOT NULL)
+if [ -n "$ACM_ARN_SEOUL" ]; then
+	echo "Certificate is exist already"
+else
+	# Not exist (NULL)	
+	terraform apply -auto-approve
+fi
+mv $FILE_NAME $WORK_DIR
+mv terraform.tfstate $WORK_DIR 2>/dev/null
+
+if $AWS_CLI_HOME/aws elbv2 describe-load-balancers --names $ELB_NAME >/dev/null 2>&1; then
+    echo "ELB Exists. No need to wait. Move on to next steps."
+else
+    echo "SLEEP 15 sec for newly created ELB"
+    sleep 15s;
+fi
+
+echo "" >> $LOG_NAME
+echo "#### Attach TG to ALB ####" >> $LOG_NAME
+export WORK_DIR="attach-elb-tg"
+export WORK_DIR_02="attach-elb-tg-$SERVICE_CLASSIFICATION_LOWER_NAME"
+export FILE_NAME="attach-elb-tg.tf"
+export ELB_ARN="`$AWS_CLI_HOME/aws elbv2 describe-load-balancers --names $ELB_NAME --query 'LoadBalancers[0].LoadBalancerArn' --output text`"
+export TARGET_GROUP_ARN="`$AWS_CLI_HOME/aws elbv2 describe-listeners --load-balancer-arn $ELB_ARN | grep TargetGroupArn | head -n 1 | awk -F " " '{ print $2 }' | sed 's/[",]//g'`"
+
+# TARGET_GROUP_ARN Null Control
+if [ -z "$TARGET_GROUP_ARN" ]; then
+    echo "TARGET_GROUP_ARN for Active TG is empty. Set as TG1's TARGET_GROUP_ARN."
+    export TARGET_GROUP_ARN="`$AWS_CLI_HOME/aws elbv2 describe-target-groups --names $TARGET_GROUP_NAME_01 --query 'TargetGroups[0].TargetGroupArn' --output text`"
+else
+    echo "TARGET_GROUP_ARN for Active TG is available."
+fi
+
+export ACM_ARN_SEOUL="`$AWS_CLI_HOME/aws acm list-certificates --query "CertificateSummaryList[?contains(DomainName, '$DOMAIN_NAME_VALUE')].CertificateArn" --region ap-northeast-2 --output text`"
+
+export ACM_ARN_NVIRGINIA="`$AWS_CLI_HOME/aws acm list-certificates --query "CertificateSummaryList[?contains(DomainName, '$DOMAIN_NAME_VALUE')].CertificateArn" --region us-east-1 --output text`"
+
+export ELB_LISTENER_ARN="`$AWS_CLI_HOME/aws elbv2 describe-listeners --load-balancer-arn $ELB_ARN --query 'Listeners[0].ListenerArn' --output text`"
+
+echo ""
+echo "ACM_ARN_SEOUL : $ACM_ARN_SEOUL"
+echo $ACM_ARN_SEOUL > ACM_ARN_SEOUL.txt
+echo ""
+echo "ACM_ARN_NVIRGINIA : $ACM_ARN_NVIRGINIA"
+echo $ACM_AR_NVIRGINIA > ACM_ARN_NVIRGINIA.txt
+echo ""
+
+export ACM_ARN_SEOUL_VALIDATION="`$AWS_CLI_HOME/aws acm describe-certificate --certificate-arn $ACM_ARN_SEOUL --region ap-northeast-2 --query 'Certificate.Status' --output text`"
+export ACM_ARN_NVIRGINIA_VALIDATION="`$AWS_CLI_HOME/aws acm describe-certificate --certificate-arn $ACM_ARN_NVIRGINIA --region us-east-1 --query 'Certificate.Status' --output text`"
+
+echo "ACM_ARN_SEOUL_VALIDATION : $ACM_ARN_SEOUL_VALIDATION"
+echo "ACM_ARN_NVIRGINIA_VALIDATION : $ACM_ARN_NVIRGINIA_VALIDATION"
+echo ""
+
+if [ $ACM_ARN_SEOUL_VALIDATION == "PENDING_VALIDATION" ]; then
+	export ACM_ARN_SEOUL="arn:aws:acm:ap-northeast-2:$AWS_ACCOUNT_NUMBER:certificate/$SAMPLE_ACM_ID_SEOUL"
+else
+	echo "Certificate Seoul is OK"
+fi
+
+echo ""
+echo "ELB_ARN : $ELB_ARN"  >> $LOG_NAME
+echo $ELB_ARN > ELB_ARN.txt
+
+echo "ELB_LISTENER_ARN: $ELB_LISTENER_ARN" >> $LOG_NAME
+echo $ELB_LISTENER_ARN > ELB_LISTENER_ARN.txt
+
+echo "TARGET_GROUP_ARN : $TARGET_GROUP_ARN" >> $LOG_NAME
+echo $TARGET_GROUP_ARN > TARGET_GROUP_ARN.txt
+
+echo "ACM_ARN_SEOUL : $ACM_ARN_SEOUL" >> $LOG_NAME
+echo $ACM_ARN_SEOUL > ACM_ARN_SEOUL.txt
+
+# Converting for Special Characters
+echo ""
+sed 's/\:/\\:/g' ELB_ARN.txt > ELB_ARN2.txt
+sed 's/\//\\\//g' ELB_ARN2.txt > ELB_ARN3.txt
+
+sed 's/\:/\\:/g' ELB_LISTENER_ARN.txt > ELB_LISTENER_ARN2.txt
+sed 's/\//\\\//g' ELB_LISTENER_ARN2.txt > ELB_LISTENER_ARN3.txt
+
+sed 's/\:/\\:/g' TARGET_GROUP_ARN.txt > TARGET_GROUP_ARN2.txt
+sed 's/\//\\\//g' TARGET_GROUP_ARN2.txt > TARGET_GROUP_ARN3.txt
+
+sed 's/\:/\\:/g' ACM_ARN_SEOUL.txt > ACM_ARN_SEOUL2.txt
+sed 's/\//\\\//g' ACM_ARN_SEOUL2.txt > ACM_ARN_SEOUL3.txt
+
+echo ""
+export ELB_ARN="`cat ELB_ARN3.txt`"
+export ELB_LISTENER_ARN="`cat ELB_LISTENER_ARN3.txt`"
+export TARGET_GROUP_ARN="`cat TARGET_GROUP_ARN3.txt`"
+export ACM_ARN_SEOUL="`cat ACM_ARN_SEOUL3.txt`"
+
+echo "" >> $LOG_NAME
+echo "ELB_ARN : $ELB_ARN" >> $LOG_NAME
+echo "ELB_LISTENER_ARN : $ELB_LISTENER_ARN" >> $LOG_NAME
+echo "TARGET_GROUP_ARN : $TARGET_GROUP_ARN" >> $LOG_NAME
+echo "ACM_ARN_SEOUL : $ACM_ARN_SEOUL" >> $LOG_NAME
+
+mkdir -p $WORK_DIR_02
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/ELB_ARN/$ELB_ARN/g" $FILE_NAME
+sed -i "s/ELB_HEALTHCHECK_PATH/$ELB_HEALTHCHECK_PATH/g" $FILE_NAME
+sed -i "s/TARGET_GROUP_ARN/$TARGET_GROUP_ARN/g" $FILE_NAME
+sed -i "s/ACM_ARN_SEOUL/$ACM_ARN_SEOUL/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME/$ENVIRONMENT_NAME/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+cat $FILE_NAME | egrep '(_arn|Environment)' >> $LOG_NAME
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR_02
+mv terraform.tfstate $WORK_DIR_02 2>/dev/null
+
+
+# ELB_LISTENER_ARN Null Control
+if [ -z $ELB_LISTENER_ARN ]; then
+    echo "ELB_LISTENER_ARN is NULL"
+    export ELB_LISTENER_ARN="`$AWS_CLI_HOME/aws elbv2 describe-listeners --load-balancer-arn $ELB_ARN --query 'Listeners[0].ListenerArn' --output text`"
+    echo "ELB_LISTENER_ARN inserted"
+    echo "ELB_LISTENER_ARN : $ELB_LISTENER_ARN"
+else
+    echo "ELB_LISTENER_ARN had a value already."
+    echo "ELB_LISTENER_ARN : $ELB_LISTENER_ARN"
+fi
+
+# Clean-up in Current Location
+find ./ -name "*.lock.hcl" -exec rm -f {} \;
+find ./ -name "*.tfstate.backup" -exec rm -f {} \;
+find ./ -name "terraform-provider-aws*" -exec rm -f {} \;
+find ./ -type d -name ".terraform" -exec rm -r {} \; 2>/dev/null
+
+cp -rp create* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp attach* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp update* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp *.json ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp *.log ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp codepipeline-create-api.sh ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+
+rm -rf create* 2>/dev/null
+rm -rf attach* 2>/dev/null
+rm -rf update* 2>/dev/null
+rm -f *.json 2>/dev/null
+rm -f *.txt 2>/dev/null
+rm -f *.log 2>/dev/null
+
+# 2024.4.27 Copied this from codepipeline-create-api.script

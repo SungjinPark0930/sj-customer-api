@@ -1,0 +1,251 @@
+
+# Clean-up
+find ./ -name '*.tfstate*' -exec rm -f {} \; 2>/dev/null
+
+# Create sample TF file
+echo "resource \"aws_lb_target_group\" \"test\" {" > sample.tf
+echo "}" >> sample.tf
+
+# Initialize
+terraform init
+rm -f sample.tf
+
+# Start Automation
+echo "" >> $LOG_NAME
+echo "#### Delete the existing .tfstate ####"
+/usr/bin/find ./ -name '*.tfstate' -exec rm -f {} \; 2>/dev/null
+
+
+###########################################################################
+echo "" >> $LOG_NAME
+echo "#### Create WAF ####" >> $LOG_NAME
+$AWS_CLI_HOME/aws wafv2 create-ip-set --name $MAIN_NAME_FIRST_UPPERCASE --scope=CLOUDFRONT --ip-address-version IPV4 --addresses "192.0.2.1/32" --region us-east-1
+export NEW_IP_SET_ID="`$AWS_CLI_HOME/aws wafv2 list-ip-sets --scope CLOUDFRONT --region us-east-1 --query "IPSets[?Name=='$MAIN_NAME_FIRST_UPPERCASE'].Id" --output text`"
+echo $NEW_IP_SET_ID
+export WORK_DIR="create-waf"
+export FILE_NAME="create-waf.tf"
+mkdir -p $WORK_DIR
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/AWS_ACCOUNT_NUMBER/$AWS_ACCOUNT_NUMBER/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME_UPPER/$ENVIRONMENT_NAME_UPPER/g" $FILE_NAME
+sed -i "s/ENV_NAME_FIRST_UPPER/$ENV_NAME_FIRST_UPPER/g" $FILE_NAME
+sed -i "s/MAIN_NAME_FIRST_UPPERCASE/$MAIN_NAME_FIRST_UPPERCASE/g" $FILE_NAME
+sed -i "s/WAF_BLACKLISTIP_ID/$WAF_BLACKLISTIP_ID/g" $FILE_NAME
+cat $FILE_NAME | egrep '(name|arn)' >> $LOG_NAME
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR
+mv terraform.tfstate $WORK_DIR 2>/dev/null
+
+
+###########################################################################
+echo ""
+echo "#### Create S3 ####"
+export WORK_DIR="create-s3"
+export WORK_DIR_02="create-s3-$SERVICE_CLASSIFICATION_LOWER_NAME"
+export FILE_NAME="create-s3.tf"
+mkdir -p $WORK_DIR_02
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/S3_BUCKET_NAME_VALUE/$S3_BUCKET_NAME_VALUE/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME/$ENVIRONMENT_NAME/g" $FILE_NAME
+sed -i "s/LOG_BUCKET_NAME_VALUE/$LOG_BUCKET_NAME_VALUE/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+cat $FILE_NAME | egrep '(bucket)' | egrep -v '(resource|aws_s3_bucket|owner|bucket_key)'
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR_02
+mv terraform.tfstate $WORK_DIR_02 2>/dev/null
+
+
+###########################################################################
+echo "" >> $LOG_NAME
+echo "#### Create CloudFront - Origin Access Control ####" >> $LOG_NAME
+export WORK_DIR="create-cloudfront-origin-access-control"
+export FILE_NAME="create-cloudfront-origin-access-control.tf"
+mkdir -p $WORK_DIR
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/MAIN_NAME_ALL_UPPERCASE/$MAIN_NAME_ALL_UPPERCASE/g" $FILE_NAME
+cat $FILE_NAME | egrep '(name|arn)' >> $LOG_NAME
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR
+mv terraform.tfstate $WORK_DIR 2>/dev/null
+
+# Get Origin Access Control's ID for Next Step
+export ORIGIN_ACCESS_CONTROL_ID_VALUE=$($AWS_CLI_HOME\/aws cloudfront list-origin-access-controls --query 'OriginAccessControlList.Items[?Name=='\`$MAIN_NAME_ALL_UPPERCASE\`'].Id' --output json | grep \" | tr -d '[:space:][:punct:]')
+
+# Validation
+if [ -z "$ORIGIN_ACCESS_CONTROL_ID_VALUE" ]; then
+    export ORIGIN_ACCESS_CONTROL_ID_VALUE="$ORIGIN_ACCESS_CONTROL_WORKAROUND_VALUE"
+    echo "Workaround ID"
+else
+    echo "Got Origin Access Control ID. Continue."
+fi
+
+
+###########################################################################
+echo "" >> $LOG_NAME
+echo "#### Create ACM ####" >> $LOG_NAME
+export WORK_DIR="create-acm-both-region-xxxx.co.kr"
+export FILE_NAME="create-acm-both-region.tf"
+export ACM_ARN_SEOUL="`$AWS_CLI_HOME/aws acm list-certificates --query "CertificateSummaryList[?contains(DomainName, '$DOMAIN_NAME_VALUE')].CertificateArn" --region ap-northeast-2 --output text`"
+mkdir -p $WORK_DIR
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/DOMAIN_NAME_VALUE/$DOMAIN_NAME_VALUE/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME_UPPER/$ENVIRONMENT_NAME_UPPER/g" $FILE_NAME
+cat $FILE_NAME | egrep '(domain_name)' >> $LOG_NAME
+
+# If ACM_ARN_SEOUL is exist already. (NOT NULL)
+if [ -n "$ACM_ARN_SEOUL" ]; then
+        echo "Certificate is exist already"
+else
+        # Not exist (NULL)
+        terraform apply -auto-approve
+fi
+mv $FILE_NAME $WORK_DIR
+mv terraform.tfstate $WORK_DIR 2>/dev/null
+
+
+###########################################################################
+echo "" >> $LOG_NAME
+echo "#### Create CloudFront - Distribution ####" >> $LOG_NAME
+echo $ELB_DOMAIN_NAME >> $LOG_NAME
+export GET_WAF_ACL_ID="`$AWS_CLI_HOME/aws wafv2 list-web-acls --query "WebACLs[?Name=='$MAIN_NAME_FIRST_UPPERCASE'].Id" --output text --scope CLOUDFRONT --region us-east-1`"
+export WAF_ACL_VALUE="arn\:aws\:wafv2\:us-east-1\:$AWS_ACCOUNT_NUMBER\:global\/webacl\/$MAIN_NAME_FIRST_UPPERCASE\/$GET_WAF_ACL_ID"
+export WORK_DIR="create-cloudfront"
+export WORK_DIR_02="create-cloudfront-$SERVICE_CLASSIFICATION_LOWER_NAME"
+export FILE_NAME="create-cloudfront.tf"
+mkdir -p $WORK_DIR_02
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+
+# Use Front Domain when it is Admin
+if [ $SERVICE_CLASSIFICATION_LOWER_NAME == "admin" ]; then
+	echo $DOMAIN_NAME_VALUE > FRONT_SSL_CERT_NAME.txt
+        sed 's/\-admin//g' FRONT_SSL_CERT_NAME.txt > FRONT_SSL_CERT_NAME_2.txt
+        export FRONT_SSL_CERT_NAME="`cat FRONT_SSL_CERT_NAME_2.txt`"
+        rm -f FRONT_SSL_CERT_NAME.txt
+        rm -f FRONT_SSL_CERT_NAME_2.txt
+	echo "-admin keyword has been removed in FRONT_SSL_CERT_NAME"
+else
+	echo "OK. It is Front Domain exist already"
+	export FRONT_SSL_CERT_NAME="$DOMAIN_NAME_VALUE"
+fi
+
+export ACM_ARN_NVIRGINIA="`$AWS_CLI_HOME/aws acm list-certificates --query "CertificateSummaryList[?contains(DomainName, '$FRONT_SSL_CERT_NAME')].CertificateArn" --region us-east-1 --output text`"
+
+echo "ACM_ARN_NVIRGINIA : $ACM_ARN_NVIRGINIA" >> $LOG_NAME
+
+echo "" >> $LOG_NAME
+echo "GET_WAF_ACL_ID : $GET_WAF_ACL_ID" >> $LOG_NAME
+echo "WAF_ACL_VALUE: $WAF_ACL_VALUE" >> $LOG_NAME
+echo "ACM_ARN_NVIRGINIA : $ACM_ARN_NVIRGINIA" >> $LOG_NAME
+echo $ACM_AR_NVIRGINIA > ACM_ARN_NVIRGINIA.txt
+echo ""
+
+export ACM_ARN_NVIRGINIA_VALIDATION="`$AWS_CLI_HOME/aws acm describe-certificate --certificate-arn $ACM_ARN_NVIRGINIA --region us-east-1 --query 'Certificate.Status' --output text`"
+
+echo "ACM_ARN_NVIRGINIA_VALIDATION : $ACM_ARN_NVIRGINIA_VALIDATION" >> $LOG_NAME
+echo ""
+
+if [ $ACM_ARN_NVIRGINIA_VALIDATION == "PENDING_VALIDATION" ] || [ $ACM_ARN_NVIRGINIA_VALIDATION == "VALIDATION_TIMED_OUT" ] || [ $ACM_ARN_NVIRGINIA_VALIDATION == "FAILED" ]; then
+	echo "ACM is PENDING_VALIDATION. Workaround ACM is applying." >> $LOG_NAME
+        export ACM_ARN_NVIRGINIA="arn:aws:acm:us-east-1:$AWS_ACCOUNT_NUMBER:certificate/$SAMPLE_ACM_ID_NVIRGINIA"
+	echo "ACM_ARN_NVIRGINIA in validation IF statement : $ACM_ARN_NVIRGINIA" >> $LOG_NAME
+else
+        echo "Certificate NVirginia is OK" >> $LOG_NAME
+fi
+
+echo "" >> $LOG_NAME
+echo "ACM_ARN_NVIRGINIA: $ACM_ARN_NVIRGINIA" >> $LOG_NAME
+echo $ACM_ARN_NVIRGINIA > ACM_ARN_NVIRGINIA.txt
+
+# Converting for Special Characters
+echo ""
+sed 's/\:/\\:/g' ACM_ARN_NVIRGINIA.txt > ACM_ARN_NVIRGINIA2.txt
+sed 's/\//\\\//g' ACM_ARN_NVIRGINIA2.txt > ACM_ARN_NVIRGINIA3.txt
+
+echo "" >> $LOG_NAME
+export ACM_ARN_NVIRGINIA="`cat ACM_ARN_NVIRGINIA3.txt`"
+
+echo "ACM_ARN_NVIRGINIA after Coverting for Special Characters : $ACM_ARN_NVIRGINIA" >> $LOG_NAME
+
+sed -i "s/ACM_ARN_NVIRGINIA/$ACM_ARN_NVIRGINIA/g" $FILE_NAME
+sed -i "s/AWS_ACCOUNT_NUMBER/$AWS_ACCOUNT_NUMBER/g" $FILE_NAME
+sed -i "s/DOMAIN_NAME_VALUE/$DOMAIN_NAME_VALUE/g" $FILE_NAME
+sed -i "s/ELB_ENDPOINT/$ELB_ENDPOINT/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME/$ENVIRONMENT_NAME/g" $FILE_NAME
+sed -i "s/HONEYPOT_ENDPOINT/$HONEYPOT_ENDPOINT/g" $FILE_NAME
+sed -i "s/LOG_BUCKET_VALUE/$LOG_BUCKET_VALUE/g" $FILE_NAME
+sed -i "s/ORIGIN_ACCESS_CONTROL_ID_VALUE/$ORIGIN_ACCESS_CONTROL_ID_VALUE/g" $FILE_NAME
+sed -i "s/ORIGIN_REQUEST_POLICY_ID_MANAGED_ALL_VIEWER/$ORIGIN_REQUEST_POLICY_ID_MANAGED_ALL_VIEWER/g" $FILE_NAME
+sed -i "s/CACHE_POLICY_ID_COMMON_S3EC2/$CACHE_POLICY_ID_COMMON_S3EC2/g" $FILE_NAME
+sed -i "s/CACHE_POLICY_ID_COMMON_ECSAPI/$CACHE_POLICY_ID_COMMON_ECSAPI/g" $FILE_NAME
+sed -i "s/CACHE_POLICY_ID_COMMON_APIGATEWAY/$CACHE_POLICY_ID_COMMON_APIGATEWAY/g" $FILE_NAME
+sed -i "s/SYSTEM_NAME_ALL_UPPERCASE/$SYSTEM_NAME_ALL_UPPERCASE/g" $FILE_NAME
+sed -i "s/S3_ENDPOINT/$S3_ENDPOINT/g" $FILE_NAME
+sed -i "s/SAMPLE_ACM_ID_NVIRGINIA/$SAMPLE_ACM_ID_NVIRGINIA/g" $FILE_NAME
+sed -i "s/WAF_ACL_VALUE/$WAF_ACL_VALUE/g" $FILE_NAME
+sed -i "s/ORIGIN_ACCESS_CONTROL_ID_VALUE/$ORIGIN_ACCESS_CONTROL_ID_VALUE/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+cat $FILE_NAME | egrep '(name|arn|_id|path)'
+cat $FILE_NAME | egrep '(name|arn|_id|path)' >> $LOG_NAME
+
+echo "S3_ENDPOINT : $S3_ENDPOINT"
+echo "S3_ENDPOINT : $S3_ENDPOINT" >> $LOG_NAME
+echo "DOMAIN_NAME_VALUE : $DOMAIN_NAME_VALUE"
+echo "DOMAIN_NAME_VALUE : $DOMAIN_NAME_VALUE" >> $LOG_NAME
+
+echo ""
+echo "" >> $LOG_NAME
+echo "START CloudFront Creation ......"
+echo "START CloudFront Creation ......" >> $LOG_NAME
+
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR_02/$FILE_NAME
+mv terraform.tfstate $WORK_DIR_02 2>/dev/null
+
+
+
+echo "" >> $LOG_NAME
+echo "#### Create - Bucket Policy - S3 Origin Access Control  ####" >> $LOG_NAME
+echo $ELB_DOMAIN_NAME >> $LOG_NAME
+export WORK_DIR="create-s3-bucket-policy"
+export WORK_DIR_02="create-s3-bucket-policy-$SERVICE_CLASSIFICATION_LOWER_NAME"
+export FILE_NAME="create-s3-policy-origin-access-control.tf"
+mkdir -p $WORK_DIR
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+
+# Get a CloudFront Distribution's ID that created recently
+export CLOUDFRONT_ID_RECENT_VALUE=$($AWS_CLI_HOME\/aws cloudfront list-distributions --query 'DistributionList.Items[?Comment=='\`$SYSTEM_NAME_ALL_UPPERCASE\`'].Id' --output json | grep "\"" | tail -1 | tr -d '[:space:][:punct:]')
+
+echo ""
+echo "" >> $LOG_NAME
+echo "CLOUDFRONT_ID_RECENT_VALUE : $CLOUDFRONT_ID_RECENT_VALUE"
+echo "CLOUDFRONT_ID_RECENT_VALUE : $CLOUDFRONT_ID_RECENT_VALUE" >> $LOG_NAME
+
+sed -i "s/AWS_ACCOUNT_NUMBER/$AWS_ACCOUNT_NUMBER/g" $FILE_NAME
+sed -i "s/S3_BUCKET_NAME_VALUE/$S3_BUCKET_NAME_VALUE/g" $FILE_NAME
+sed -i "s/CLOUDFRONT_ID_RECENT_VALUE/$CLOUDFRONT_ID_RECENT_VALUE/g" $FILE_NAME
+cat $FILE_NAME | egrep '(name|arn|_id|path|bucket)' >> $LOG_NAME
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR_02
+mv terraform.tfstate $WORK_DIR_02 2>/dev/null
+
+
+# Clean-up in Current Location
+find ./ -name "*.lock.hcl" -exec rm -f {} \;
+find ./ -name "*.tfstate.backup" -exec rm -f {} \;
+find ./ -name "terraform-provider-aws*" -exec rm -f {} \;
+find ./ -type d -name ".terraform" -exec rm -r {} \; 2>/dev/null
+
+mkdir -p ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER
+
+cp -rp create* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp attach* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp update* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp *.log ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp cloudfront-create.sh ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER/cloudfront-create-$SERVICE_CLASSIFICATION_LOWER_NAME.sh 2>/dev/null
+
+rm -rf create* 2>/dev/null
+rm -rf attach* 2>/dev/null
+rm -rf update* 2>/dev/null
+rm -f *.txt 2>/dev/null
+rm -f *.log 2>/dev/null

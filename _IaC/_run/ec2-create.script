@@ -1,0 +1,201 @@
+
+# Clean-up
+find ./ -name '*.tfstate*' -exec rm -f {} \; 2>/dev/null
+
+# Create sample TF file
+#echo "resource \"aws_lb_target_group\" \"test\" {" > sample.tf
+#echo "}" >> sample.tf
+cp -rp /home/ec2-user/git/xxxxx/create-ec2-keypair.tf .
+
+# Initialize
+terraform init
+#rm -f sample.tf
+rm -f create-ec2-keypair.tf
+
+# Start Automation
+echo "" > $LOG_NAME
+echo "#### Delete the existing .tfstate ####"
+/usr/bin/find ./ -name '*.tfstate' -exec rm -f {} \; 2>/dev/null
+
+
+echo "" >> $LOG_NAME
+echo "#### Create EC2 Keypair ####" >> $LOG_NAME
+export WORK_DIR="create-ec2-keypair"
+export FILE_NAME="create-ec2-keypair.tf"
+mkdir -p $WORK_DIR
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+# Select Keypair
+    if [ "$EC2_OS_TYPE" == "win" ]; then
+        EC2_KEYPAIR_TYPE="private_key_pem"
+    else
+        EC2_KEYPAIR_TYPE="private_key_openssh"
+    fi
+sed -i "s/EC2_KEYPAIR_ALGORITHM/$EC2_KEYPAIR_ALGORITHM/g" $FILE_NAME
+sed -i "s/EC2_KEYPAIR_TYPE/$EC2_KEYPAIR_TYPE/g" $FILE_NAME
+sed -i "s/MAIN_NAME_FIRST_UPPERCASE/$MAIN_NAME_FIRST_UPPERCASE/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME_UPPER/$ENVIRONMENT_NAME_UPPER/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+cat $FILE_NAME | egrep '(_arn|Environment|kms|name|repository|algorithm)' >> $LOG_NAME
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR
+mv terraform.tfstate $WORK_DIR 2>/dev/null
+
+
+echo "" >> $LOG_NAME
+echo "#### Create EC2 Security Group ####" >> $LOG_NAME
+export WORK_DIR="create-sg"
+export FILE_NAME="create-sg.tf"
+mkdir -p $WORK_DIR
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+
+# 변수 치환 (SG_NAME 변수를 명확히 정의)
+SG_NAME=$MAIN_NAME_FIRST_UPPERCASE
+sed -i "s/SECURITY_GROUP_NAME/$SG_NAME/g" $FILE_NAME
+sed -i "s/VPC_ID/$VPC_ID/g" $FILE_NAME
+sed -i "s/SYSTEM_NAME_FIRST_UPPERCASE/$MAIN_NAME_FIRST_UPPERCASE/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME/$ENVIRONMENT_NAME_UPPER/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME_UPPER/$ENVIRONMENT_NAME_UPPER/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+
+cat $FILE_NAME | egrep '(_arn|Environment|kms|name|repository|algorithm)' >> $LOG_NAME
+
+# 1. 먼저 Terraform Apply 실행
+terraform apply -auto-approve
+
+# 조회할 SG 이름을 소문자로 변환 (비교 기준점)
+TARGET_NAME_LOWER=$(echo "$SG_NAME" | tr '[:upper:]' '[:lower:]')
+
+echo "Searching for Security Group (Case-insensitive): $SG_NAME"
+
+# 1. 해당 VPC의 모든 SG 목록을 가져와 jq로 대소문자 구분 없이 필터링
+EC2_APPLICATION_SG=$(aws ec2 describe-security-groups \
+    --filters "Name=vpc-id,Values=$VPC_ID" \
+    --query "SecurityGroups[*].{Name:GroupName, Id:GroupId}" \
+    --output json | jq -r ".[] | select(.Name | ascii_downcase == \"$TARGET_NAME_LOWER\") | .Id" | head -n 1)
+
+# 2. 결과 확인
+if [ -z "$EC2_APPLICATION_SG" ] || [ "$EC2_APPLICATION_SG" == "null" ]; then
+    echo "ERROR: Could not find Security Group with name (case-insensitive): $SG_NAME"
+    # 필요 시 여기서 신규 생성을 위한 예외 처리를 추가할 수 있습니다.
+    exit 1
+fi
+
+echo "Found SG_ID: $EC2_APPLICATION_SG"
+export EC2_APPLICATION_SG
+
+mv $FILE_NAME $WORK_DIR
+mv terraform.tfstate $WORK_DIR 2>/dev/null
+
+
+## Get More IP Address
+#
+# Check required environment variables
+if [ -z "$SUBNET1_ID" ] || [ -z "$SUBNET2_ID" ]; then
+  echo "ERROR: SUBNET1_ID and SUBNET2_ID must be set as environment variables."
+  exit 1
+fi
+
+# Function: get available IP count for a subnet
+get_available_ips() {
+  local subnet_id=$1
+
+  # CIDR Block 조회
+  cidr=$(aws ec2 describe-subnets --subnet-ids "$subnet_id" \
+    --query "Subnets[0].CidrBlock" --output text)
+
+  # 총 IP 개수 계산
+  total_ips=$(python3 - <<EOF
+import ipaddress
+print(ipaddress.ip_network("$cidr").num_addresses - 5)  # AWS 예약 IP 5개 제외
+EOF
+)
+
+  # 사용 중인 IP 개수 조회 (ENI 기준)
+  used_ips=$(aws ec2 describe-network-interfaces \
+    --filters "Name=subnet-id,Values=$subnet_id" \
+    --query "length(NetworkInterfaces)" --output text)
+
+  available_ips=$((total_ips - used_ips))
+  echo "$available_ips"
+}
+
+# -----------------------------------------------------------
+
+# Subnet별 남은 IP 조회
+avail1=$(get_available_ips "$SUBNET1_ID")
+avail2=$(get_available_ips "$SUBNET2_ID")
+
+echo "Subnet $SUBNET1_ID available IPs: $avail1"
+echo "Subnet $SUBNET2_ID available IPs: $avail2"
+
+# -----------------------------------------------------------
+
+# 더 많은 IP가 남아있는 Subnet 선택
+if [ "$avail1" -gt "$avail2" ]; then
+  EC2_MORE_IP_SUBNET=$SUBNET1_ID
+else
+  EC2_MORE_IP_SUBNET=$SUBNET2_ID
+fi
+
+# Availability Zone 조회
+EC2_AVAILABILITY_ZONE=$(aws ec2 describe-subnets --subnet-ids "$EC2_MORE_IP_SUBNET" \
+  --query "Subnets[0].AvailabilityZone" --output text)
+
+# 출력 및 export
+echo "EC2_MORE_IP_SUBNET=$EC2_MORE_IP_SUBNET"
+echo "EC2_AVAILABILITY_ZONE=$EC2_AVAILABILITY_ZONE"
+
+export EC2_MORE_IP_SUBNET
+export EC2_AVAILABILITY_ZONE
+
+
+echo "" >> $LOG_NAME
+echo "#### Create EC2 Instance ####" >> $LOG_NAME
+export WORK_DIR="create-ec2"
+export FILE_NAME="create-ec2.tf"
+mkdir -p $WORK_DIR
+cp -rp ../../blueprint/$WORK_DIR/$FILE_NAME .
+sed -i "s/EC2_OS_IMAGE/$EC2_OS_IMAGE/g" $FILE_NAME
+sed -i "s/EC2_TYPE/$EC2_TYPE/g" $FILE_NAME
+sed -i "s/EC2_MORE_IP_SUBNET/$EC2_MORE_IP_SUBNET/g" $FILE_NAME
+sed -i "s/MAIN_NAME_FIRST_UPPERCASE/$MAIN_NAME_FIRST_UPPERCASE/g" $FILE_NAME
+sed -i "s/EC2_KEYPAIR_ALGORITHM/$EC2_KEYPAIR_ALGORITHM/g" $FILE_NAME
+sed -i "s/EC2_APPLICATION_SG/$EC2_APPLICATION_SG/g" $FILE_NAME
+sed -i "s/EC2_COMMON_SG/$EC2_COMMON_SG/g" $FILE_NAME
+sed -i "s/EC2_ROOT_VOLUME_SIZE/$EC2_ROOT_VOLUME_SIZE/g" $FILE_NAME
+sed -i "s/EC2_RUNNING_HOUR/$EC2_RUNNING_HOUR/g" $FILE_NAME
+sed -i "s/ENVIRONMENT_NAME_UPPER/$ENVIRONMENT_NAME_UPPER/g" $FILE_NAME
+sed -i "s/EC2_AVAILABILITY_ZONE/$EC2_AVAILABILITY_ZONE/g" $FILE_NAME
+sed -i "s/APPLICATION_ID/$APPLICATION_ID/g" $FILE_NAME
+cat $FILE_NAME | egrep '(_arn|Environment|kms|name|repository|algorithm)' >> $LOG_NAME
+terraform apply -auto-approve
+mv $FILE_NAME $WORK_DIR
+mv terraform.tfstate $WORK_DIR 2>/dev/null
+
+
+
+# Clean-up in Current Location
+find ./ -name "*.lock.hcl" -exec rm -f {} \;
+find ./ -name "*.tfstate.backup" -exec rm -f {} \;
+find ./ -name "terraform-provider-aws*" -exec rm -f {} \;
+find ./ -type d -name ".terraform" -exec rm -r {} \; 2>/dev/null
+
+# Copy files
+mkdir -p ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER
+
+cp -rp create* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp attach* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp update* ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp *.json ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp *.log ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+cp -rp codepipeline-create-api.sh ../../$MAIN_NAME_SHORT_LOWER/$ENVIRONMENT_NAME_LOWER 2>/dev/null
+
+mv *.pem keypair
+
+rm -rf create* 2>/dev/null
+rm -rf attach* 2>/dev/null
+rm -rf update* 2>/dev/null
+rm -f *.json 2>/dev/null
+rm -f *.txt 2>/dev/null
+rm -f *.log 2>/dev/null
+

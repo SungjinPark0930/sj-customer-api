@@ -1,0 +1,57 @@
+#!/bin/bash
+
+export ACTION_NAME=$1
+
+# 입력이 없는 경우 사용자에게 입력 요청
+if [ -z "$ACTION_NAME" ]; then
+    echo "Usage: $0 <ACTION_NAME>"
+    echo ""
+    echo "Please input Script Name e.g., codepipeline-create.script"
+    echo ""
+    exit 1
+fi
+
+# Clean-up
+rm -f *.log
+
+# Create run.sh
+cat parameter.properties > temp.sh
+echo "#################" >> temp.sh
+cat $ACTION_NAME >> temp.sh
+chmod 700 temp.sh
+
+# Pre-check - DB Service Name
+export GET_SERVICE_CLASSIFICATION_LOWER_NAME="`cat parameter.properties | grep SERVICE_CLASSIFICATION_LOWER_NAME | head -1 | awk -F "=" '{ print $2 }' | tr -d '[:punct:]'`"
+
+if [ $ACTION_NAME == 'rds-create-cluster' ] && [ $GET_SERVICE_CLASSIFICATION_LOWER_NAME != 'db' ]; then
+	echo "ERROR - SERVICE_CLASSIFICATION_LOWER_NAME is NOT db"
+	exit -1;
+else
+	echo "OK"
+fi
+
+# Pre-check - API Service Name
+export GET_SERVICE_CLASSIFICATION_LOWER_NAME="`cat parameter.properties | grep SERVICE_CLASSIFICATION_LOWER_NAME | head -1 | awk -F "=" '{ print $2 }' | tr -d '[:punct:]'`"
+
+if [ $ACTION_NAME == 'codepipeline-create-api' ] && [ $GET_SERVICE_CLASSIFICATION_LOWER_NAME != 'api' ]; then
+	echo "ERROR - SERVICE_CLASSIFICATION_LOWER_NAME is NOT api"
+	exit -1;
+else
+	echo "OK"
+fi
+
+# Pre-check - Environment Name
+export GET_ENVIRONMENT_NAME_LOWER="`cat parameter.properties | grep ENVIRONMENT_NAME_LOWER | head -1 | awk -F "=" '{ print $2 }' | tr -d '[:punct:]'`"
+
+if [ $GET_ENVIRONMENT_NAME_LOWER == 'dev' ] || [ $GET_ENVIRONMENT_NAME_LOWER == 'prod' ]; then
+	echo "OK"
+else
+	echo "ERROR - ENVIRONMENT_NAME_LOWER is NOT dev or prod"
+	exit -1;
+fi
+
+# Execute
+./temp.sh
+
+# Delete
+rm -f temp.sh

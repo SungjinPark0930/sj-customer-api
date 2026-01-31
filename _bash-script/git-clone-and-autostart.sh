@@ -3,7 +3,7 @@
 export ORGANIZATION_NAME=SungjinPark0930
 export REPO_NAME=sj-customer-api
 export BRANCH_NAME=master
-export OS_USER_NAME=akuserver
+export OS_USER_NAME=USERNAME
 
 cd /git
 rm -rf /git/$REPO_NAME
