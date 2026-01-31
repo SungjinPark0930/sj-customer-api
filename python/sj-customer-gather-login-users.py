@@ -2,6 +2,10 @@
 """
 Firestore의 sj-customer2 프로젝트에 있는 sj-customer 컬렉션에서 이번 달에 업데이트된
 사용자(userId) 목록을 조회하고, 그 결과를 send_updated_users.out 파일로 저장한다.
+
+pip3 google-cloud-firestore
+pip3 google-cloud-core
+pip3 google-api-core
 """
 from __future__ import annotations
 

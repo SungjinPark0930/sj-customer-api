@@ -1,5 +1,6 @@
-# Application Name
-Customer Management API2
+# bash-terraform : AWS based Infrastructure as Code
+# python : PyTorch BERT Train, Customer Management Batch
+# rust : Customer Management API
 
 # GCP Project ID File
 project_id
